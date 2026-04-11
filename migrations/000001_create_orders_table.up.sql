@@ -1,0 +1,9 @@
+CREATE TABLE IF NOT EXISTS orders (
+    id VARCHAR(50) PRIMARY KEY,
+    customer_id VARCHAR(50) NOT NULL,
+    item_name VARCHAR(255) NOT NULL,
+    amount BIGINT NOT NULL CHECK (amount > 0),
+    status VARCHAR(50) NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    idempotency_key VARCHAR(100) UNIQUE NOT NULL
+);
