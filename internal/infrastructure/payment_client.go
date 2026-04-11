@@ -6,6 +6,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	"order/internal/domain"
 
@@ -38,6 +39,9 @@ func (c *PaymentClient) AuthorizePayment(ctx context.Context, orderID string, am
 
 	resp, err := client.ProcessPayment(ctx, req)
 	if err != nil {
+		if st, ok := status.FromError(err); ok {
+			return "", errors.New(st.Message())
+		}
 		return "", err
 	}
 

@@ -3,6 +3,7 @@ package usecase
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -68,7 +69,7 @@ func (u *orderUseCase) CreateOrder(ctx context.Context, customerID, itemName str
 
 	if err != nil {
 		_ = u.repo.UpdateStatus(ctx, order.ID, domain.StatusFailed)
-		return nil, ErrPaymentUnavailable
+		return nil, fmt.Errorf("%w: %w", ErrPaymentUnavailable, err)
 	}
 
 	newStatus := domain.StatusPaid

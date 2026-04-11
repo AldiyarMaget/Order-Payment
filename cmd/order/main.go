@@ -56,14 +56,14 @@ func main() {
 	}
 	log.Println("Database migrations applied.")
 
-	paymentURL := os.Getenv("PAYMENT_SERVICE_URL")
-	if paymentURL == "" {
-		paymentURL = "http://localhost:8081"
+	paymentAddr := os.Getenv("PAYMENT_SERVICE_ADDR")
+	if paymentAddr == "" {
+		paymentAddr = "localhost:50051"
 	}
 
 	orderRepo := repository.NewPostgresOrder(db)
 
-	paymentClient := infrastructure.NewPaymentClient(paymentURL)
+	paymentClient := infrastructure.NewPaymentClient(paymentAddr)
 	orderUseCase := usecase.NewOrderUseCase(orderRepo, paymentClient)
 
 	router := gin.Default()

@@ -1,120 +1,78 @@
-# Order and Payment Infrastructure
+# Assignment 2: gRPC Microservices Architecture
 
-This repository contains the `Order App` and `Payment App` designed according to Clean Architecture and Domain-Driven Design principles.
-They communicate synchronously via REST with specific failure cases gracefully handled.
+## Project Overview
+This project consists of two core microservices: **Order Service** and **Payment Service**, communicating efficiently via gRPC. The system demonstrates a modern microservices architecture by handling standard REST API requests, securely executing internal unary gRPC calls between services, and providing real-time updates to clients via server-side streaming.
 
-## System Architecture
+## Architecture Links
+The project utilizes a Contract-First approach, keeping protocol definitions and generated SDKs in dedicated, decoupled repositories:
+* **Contract Repository (Protos):** [aitu-protos](https://github.com/AldiyarMaget/aitu-protos)
+* **Generated SDK Repository:** [aitu-go-sdk](https://github.com/AldiyarMaget/aitu-go-sdk)
 
-**Tech Stack:** Go 1.2x, Gin Gonic, PostgreSQL, Docker Compose  
-**Ports:**
-- **Order Service:** `8080`
-- **Payment Service:** `8081`
+## Tech Stack
+* **Language:** Go 1.22
+* **Communication:** 
+  * gRPC (Unary & Server-Side Streaming)
+  * REST API (Gin Framework)
+* **Database:** PostgreSQL
+* **Infrastructure:** Docker, Docker Compose
 
-```mermaid
-flowchart TD
-    Client[Client POST /orders] -->|HTTP| OrderDelivery[Order Delivery: Gin Router]
-    
-    subgraph "Order Service"
-        OrderDelivery --> OrderUseCase[Order UseCase]
-        OrderUseCase --> OrderRepository[Order Repository]
-        OrderUseCase --> PaymentClient[Payment Client: REST]
+## Key Features
+* **gRPC Interceptors:** Implemented server-side interceptors for centralized logging of incoming gRPC requests.
+* **Observer Pattern:** Implemented in the Order Service for real-time state notification broadcasting to connected gRPC streaming clients.
+* **Resilient Error Propagating:** Utilizes `google.golang.org/grpc/status` to accurately relay failure scenarios across service boundaries.
+
+## Architecture Diagram
+```mermaid 
+graph TD
+    Client1[External Client] -->|"REST Request (POST /orders)"| OrderREST["Order Service (REST)<br/>Port: 8080"]
+    Client2[External Client] -->|"gRPC Stream (SubscribeReq)"| OrderGRPC["Order Service (gRPC)<br/>Port: 50052"]
+
+    OrderREST -->|"gRPC Unary (ProcessPayment)"| PaymentService["Payment Service<br/>Port: 50051"]
+
+    subgraph Docker Infrastructure
+        OrderDB[("Order Database<br/>(PostgreSQL)")]
+        PaymentDB[("Payment Database<br/>(PostgreSQL)")]
     end
 
-    subgraph "Payment Service"
-        PaymentDelivery[Payment Delivery: Gin Router] --> PaymentUseCase[Payment UseCase]
-        PaymentUseCase --> PaymentRepository[Payment Repository]
-    end
-
-    OrderRepository -->|Read/Write| OrderDB[(PostgreSQL\norders-db :5431)]
-    PaymentRepository -->|Read/Write| PaymentDB[(PostgreSQL\npayments-db :5432)]
-
-    PaymentClient -->|HTTP 2s timeout| PaymentDelivery
+    OrderREST -.->|TCP| OrderDB
+    OrderGRPC -.->|TCP| OrderDB
+    PaymentService -.->|TCP| PaymentDB
 ```
 
-## Setup Instructions
+## Execution Instructions
 
-### 1. Start the Databases
-The services rely on two independent PostgreSQL databases. To spin them up, use Docker Compose:
+### 1. Environment Configuration (`.env`)
+Ensure an `.env` file exists in the root of the project. Below is an example configuration containing necessary variable addresses:
+```env
+# External REST API Configuration
+PORT=8080
 
+# Order Service Dependencies
+DATABASE_URL=postgres://postgres:postgres@localhost:5431/order_db?sslmode=disable
+PAYMENT_SERVICE_ADDR=localhost:50051
+ORDER_GRPC_PORT=:50052
+
+# Payment Service Dependencies
+PAYMENT_DB_URL=postgres://postgres:postgres@localhost:5432/payment_db?sslmode=disable
+```
+
+### 2. Launch Databases in Docker
+Boot up the PostgreSQL instances defined for both services using Docker Compose:
 ```bash
 docker-compose up -d
 ```
 
-This starts:
-- `orders-db` accessible externally on `localhost:5431`.
-- `payments-db` accessible externally on `localhost:5432`.
+### 3. Start Microservices
+Run the microservices from the project root using `go run` or by compiling the binaries.
 
-### 2. Configure Environment
-Copy the example environment variables file and configure it (optional for defaults):
+**Launch the Payment Service:**
+This command will start the gRPC server listening securely on port `50051`.
 ```bash
-cp .env.example .env
+go run ./payment/cmd/main.go
 ```
-Ensure you provide these environment variables when running if you deviate from the `.env.example` file. 
 
-### 3. Run the Services
-Note: The databases apply necessary schema migrations automatically when the services start.
-
-**Terminal 1 (Run Payment Service):**
+**Launch the Order Service:**
+In a separate terminal instance, launch the Order Service. It sequentially launches both the REST interface (Port `8080`) and the gRPC Stream server (Port `50052`).
 ```bash
-cd payment
-PORT=8081 PAYMENT_DB_URL=postgres://postgres:postgres@localhost:5432/payment_db?sslmode=disable go run cmd/payment/main.go
+go run ./cmd/order/main.go
 ```
-
-**Terminal 2 (Run Order Service):**
-```bash
-PORT=8080 DATABASE_URL=postgres://postgres:postgres@localhost:5431/order_db?sslmode=disable PAYMENT_SERVICE_URL=http://localhost:8081 go run cmd/order/main.go
-```
-
-## API Testing & CURL Examples
-
-### 1. Post a Valid Order
-This will successfully create an order and call the Payment service to authorize.
-
-```
-curl -X POST http://localhost:8080/orders \
--H "Content-Type: application/json" \
--H "Idempotency-Key: unique-key-1" \
--d '{
-    "customer_id": "cust-123",
-    "item_name": "Premium Widget",
-    "amount": 50000
-}'
-```
-
-### 2. Verify Idempotency 
-Run the exact same command with the `-H "Idempotency-Key: unique-key-1"` header. It should return `200 OK` safely returning the existing order ID from the first request rather than creating a new one.
-
-### 3. Decline High Values
-The Payment service will decline payments greater than 1,000.00 (100,000 cents).
-
-```bash
-curl -X POST http://localhost:8080/orders \
--H "Content-Type: application/json" \
--H "Idempotency-Key: unique-key-2" \
--d '{
-    "customer_id": "cust-124",
-    "item_name": "Luxury Yacht",
-    "amount": 100001
-}'
-```
-This produces an authorization failure from the Payment app and the Order status falls back to `Failed`.
-
-### 4. 2-Second Timeout Scenario (Simulating Outage)
-The `Order Service` has a strict `.Timeout = 2 * time.Second` when calling the Payment service. If the Payment Service is offline, the Order Service returns an `HTTP 503 Service Unavailable` status rather than returning a 201 Created.
-
-**How to trigger:**
-1. **Stop** the Payment Service terminal process (Ctrl+C).
-2. Execute the curl below:
-
-```bash
-curl -X POST http://localhost:8080/orders \
--H "Content-Type: application/json" \
--H "Idempotency-Key: unique-key-3" \
--d '{
-    "customer_id": "cust-125",
-    "item_name": "Timeout Widget",
-    "amount": 200
-}'
-```
-
-Because the Payment Service is offline, the Order service will fail immediately (Connection Refused or Timeout), strictly enforcing the 2-second timeout envelope, and explicitly respond to the client with an `HTTP 503 Service Unavailable` status.
