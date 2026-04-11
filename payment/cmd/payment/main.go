@@ -3,15 +3,20 @@ package main
 import (
 	"database/sql"
 	"log"
+	"net"
 	"os"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+	"google.golang.org/grpc"
 
+	grpc_delivery "order/payment/internal/delivery/grpc"
 	delivery "order/payment/internal/delivery/http"
 	"order/payment/internal/repository"
 	"order/payment/internal/usecase"
+
+	contract "github.com/AldiyarMaget/aitu-go-sdk"
 )
 
 func runMigrations(db *sql.DB, filepath string) error {
@@ -60,8 +65,31 @@ func main() {
 		port = "8081"
 	}
 
-	log.Printf("Payment service starting on port %s", port)
+	grpcPort := os.Getenv("PAYMENT_GRPC_PORT")
+	if grpcPort == "" {
+		grpcPort = ":50051"
+	}
+
+	go func() {
+		lis, err := net.Listen("tcp", grpcPort)
+		if err != nil {
+			log.Fatalf("failed to listen on gRPC port: %v", err)
+		}
+
+		grpcServer := grpc.NewServer(
+			grpc.UnaryInterceptor(grpc_delivery.LoggingInterceptor),
+		)
+		grpcHandler := grpc_delivery.NewPaymentHandler(uc)
+		contract.RegisterPaymentServiceServer(grpcServer, grpcHandler)
+
+		log.Printf("Payment gRPC service starting on port %s", grpcPort)
+		if err := grpcServer.Serve(lis); err != nil {
+			log.Fatalf("failed to run payment gRPC service: %v", err)
+		}
+	}()
+
+	log.Printf("Payment HTTP service starting on port %s", port)
 	if err := r.Run(":" + port); err != nil {
-		log.Fatalf("failed to run payment service: %v", err)
+		log.Fatalf("failed to run payment HTTP service: %v", err)
 	}
 }

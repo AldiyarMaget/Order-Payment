@@ -3,18 +3,22 @@ package main
 import (
 	"database/sql"
 	"log"
+	"net"
 	"net/http"
 	"os"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
+	"google.golang.org/grpc"
 
+	grpc_delivery "order/internal/delivery/grpc"
 	delivHTTP "order/internal/delivery/http"
 	"order/internal/infrastructure"
 	"order/internal/repository"
 	"order/internal/usecase"
+
+	contract "github.com/AldiyarMaget/aitu-go-sdk"
 )
 
 func runMigrations(db *sql.DB, filepath string) error {
@@ -58,11 +62,8 @@ func main() {
 	}
 
 	orderRepo := repository.NewPostgresOrder(db)
-	
-	httpClient := &http.Client{
-		Timeout: 2 * time.Second,
-	}
-	paymentClient := infrastructure.NewPaymentClient(httpClient, paymentURL)
+
+	paymentClient := infrastructure.NewPaymentClient(paymentURL)
 	orderUseCase := usecase.NewOrderUseCase(orderRepo, paymentClient)
 
 	router := gin.Default()
@@ -73,7 +74,28 @@ func main() {
 		port = "8080"
 	}
 
-	log.Printf("Order Service listening on :%s", port)
+	grpcPort := os.Getenv("ORDER_GRPC_PORT")
+	if grpcPort == "" {
+		grpcPort = ":50052"
+	}
+
+	go func() {
+		lis, err := net.Listen("tcp", grpcPort)
+		if err != nil {
+			log.Fatalf("failed to listen on order gRPC port: %v", err)
+		}
+
+		grpcServer := grpc.NewServer()
+		grpcHandler := grpc_delivery.NewOrderHandler(orderUseCase)
+		contract.RegisterOrderTrackingServiceServer(grpcServer, grpcHandler)
+
+		log.Printf("Order gRPC Service listening on %s", grpcPort)
+		if err := grpcServer.Serve(lis); err != nil {
+			log.Fatalf("failed to serve order gRPC: %v", err)
+		}
+	}()
+
+	log.Printf("Order HTTP Service listening on :%s", port)
 	if err := http.ListenAndServe(":"+port, router); err != nil {
 		log.Fatalf("failed to start server: %v", err)
 	}
