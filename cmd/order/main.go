@@ -6,6 +6,8 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
@@ -18,8 +20,51 @@ import (
 	"order/internal/repository"
 	"order/internal/usecase"
 
-	contract "github.com/AldiyarMaget/aitu-go-sdk"
+	contract "github.com/AldiyarMaget/aitu-go-sdk/contract"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
+
+var (
+	httpRequestsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "http_requests_total",
+			Help: "Total number of HTTP requests.",
+		},
+		[]string{"method", "endpoint", "code"},
+	)
+	httpRequestDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "http_request_duration_seconds",
+			Help:    "Duration of HTTP requests in seconds.",
+			Buckets: prometheus.DefBuckets,
+		},
+		[]string{"method", "endpoint", "code"},
+	)
+)
+
+func init() {
+	prometheus.MustRegister(httpRequestsTotal)
+	prometheus.MustRegister(httpRequestDuration)
+}
+
+func prometheusMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		start := time.Now()
+		c.Next()
+		duration := time.Since(start).Seconds()
+
+		method := c.Request.Method
+		endpoint := c.FullPath()
+		if endpoint == "" {
+			endpoint = "unknown"
+		}
+		status := strconv.Itoa(c.Writer.Status())
+
+		httpRequestsTotal.WithLabelValues(method, endpoint, status).Inc()
+		httpRequestDuration.WithLabelValues(method, endpoint, status).Observe(duration)
+	}
+}
 
 func runMigrations(db *sql.DB, filepath string) error {
 	content, err := os.ReadFile(filepath)
@@ -67,6 +112,8 @@ func main() {
 	orderUseCase := usecase.NewOrderUseCase(orderRepo, paymentClient)
 
 	router := gin.Default()
+	router.Use(prometheusMiddleware())
+	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	delivHTTP.NewOrderHandler(router, orderUseCase)
 
 	port := os.Getenv("PORT")

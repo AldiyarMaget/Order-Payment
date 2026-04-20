@@ -2,7 +2,6 @@ package grpc_delivery
 
 import (
 	"context"
-	"time"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -10,7 +9,7 @@ import (
 	"order/payment/internal/domain"
 	"order/payment/internal/usecase"
 
-	contract "github.com/AldiyarMaget/aitu-go-sdk"
+	contract "github.com/AldiyarMaget/aitu-go-sdk/contract"
 )
 
 type PaymentHandler struct {
@@ -21,6 +20,17 @@ type PaymentHandler struct {
 func NewPaymentHandler(uc usecase.PaymentUseCase) *PaymentHandler {
 	return &PaymentHandler{
 		useCase: uc,
+	}
+}
+
+func (h *PaymentHandler) mapStatusToPb(s domain.PaymentStatus) contract.PaymentStatus {
+	switch s {
+	case domain.PaymentStatusAuthorized:
+		return contract.PaymentStatus_PAYMENT_STATUS_AUTHORIZED
+	case domain.PaymentStatusDeclined:
+		return contract.PaymentStatus_PAYMENT_STATUS_DECLINED
+	default:
+		return contract.PaymentStatus_PAYMENT_STATUS_UNSPECIFIED
 	}
 }
 
@@ -57,4 +67,25 @@ func (h *PaymentHandler) ProcessPayment(ctx context.Context, req *contract.Payme
 		Amount:        payment.Amount,
 		Status:        pbStatus,
 	}, nil
+}
+
+func (h *PaymentHandler) ListPayments(ctx context.Context, req *contract.ListPaymentsRequest) (*contract.ListPaymentsResponse, error) {
+
+	payments, err := h.useCase.ListPayments(ctx, req.GetStatus())
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "failed to get payments: %v", err)
+	}
+
+	var pbPayments []*contract.PaymentResponse
+	for _, p := range payments {
+		pbPayments = append(pbPayments, &contract.PaymentResponse{
+			Id:            p.ID,
+			OrderId:       p.OrderID,
+			TransactionId: p.TransactionID,
+			Amount:        p.Amount,
+			Status:        h.mapStatusToPb(p.Status), 
+		})
+	}
+
+	return &contract.ListPaymentsResponse{Payments: pbPayments}, nil
 }

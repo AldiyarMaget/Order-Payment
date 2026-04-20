@@ -10,13 +10,17 @@ import (
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 	"google.golang.org/grpc"
+	"net/http"
+
+	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 
 	grpc_delivery "order/payment/internal/delivery/grpc"
 	delivery "order/payment/internal/delivery/http"
 	"order/payment/internal/repository"
 	"order/payment/internal/usecase"
 
-	contract "github.com/AldiyarMaget/aitu-go-sdk"
+	contract "github.com/AldiyarMaget/aitu-go-sdk/contract"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
 func runMigrations(db *sql.DB, filepath string) error {
@@ -58,7 +62,16 @@ func main() {
 	uc := usecase.NewPaymentUseCase(repo)
 
 	r := gin.Default()
+	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	delivery.NewPaymentHandler(r, uc)
+
+	go func() {
+		http.Handle("/metrics", promhttp.Handler())
+		log.Println("Starting metrics server on :8080")
+		if err := http.ListenAndServe(":8080", nil); err != nil {
+			log.Fatalf("Metrics server failed: %v", err)
+		}
+	}()
 
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -77,10 +90,14 @@ func main() {
 		}
 
 		grpcServer := grpc.NewServer(
-			grpc.UnaryInterceptor(grpc_delivery.LoggingInterceptor),
+			grpc.ChainUnaryInterceptor(
+				grpc_delivery.LoggingInterceptor,
+				grpc_prometheus.UnaryServerInterceptor,
+			),
 		)
 		grpcHandler := grpc_delivery.NewPaymentHandler(uc)
 		contract.RegisterPaymentServiceServer(grpcServer, grpcHandler)
+		grpc_prometheus.Register(grpcServer)
 
 		log.Printf("Payment gRPC service starting on port %s", grpcPort)
 		if err := grpcServer.Serve(lis); err != nil {

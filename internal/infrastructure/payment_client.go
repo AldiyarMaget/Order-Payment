@@ -10,7 +10,7 @@ import (
 
 	"order/internal/domain"
 
-	contract "github.com/AldiyarMaget/aitu-go-sdk"
+	contract "github.com/AldiyarMaget/aitu-go-sdk/contract"
 )
 
 type PaymentClient struct {

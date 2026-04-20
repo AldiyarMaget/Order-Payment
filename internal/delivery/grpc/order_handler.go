@@ -8,7 +8,7 @@ import (
 	"order/internal/domain"
 	"order/internal/usecase"
 
-	contract "github.com/AldiyarMaget/aitu-go-sdk"
+	contract "github.com/AldiyarMaget/aitu-go-sdk/contract"
 )
 
 type OrderHandler struct {

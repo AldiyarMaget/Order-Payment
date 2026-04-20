@@ -13,6 +13,7 @@ var ErrPaymentExists = errors.New("payment already processed for this order")
 type PaymentUseCase interface {
 	ProcessPayment(ctx context.Context, orderID string, amount int64) (*domain.Payment, error)
 	GetPaymentByOrderID(ctx context.Context, orderID string) (*domain.Payment, error)
+	ListPayments(ctx context.Context, status string) ([]*domain.Payment, error)
 }
 
 type paymentUseCase struct {
@@ -54,4 +55,8 @@ func (u *paymentUseCase) ProcessPayment(ctx context.Context, orderID string, amo
 
 func (u *paymentUseCase) GetPaymentByOrderID(ctx context.Context, orderID string) (*domain.Payment, error) {
 	return u.repo.GetByOrderID(ctx, orderID)
+}
+
+func (u *paymentUseCase) ListPayments(ctx context.Context, status string) ([]*domain.Payment, error) {
+    return u.repo.ListByStatus(ctx, status)
 }
