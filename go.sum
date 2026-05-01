@@ -1,5 +1,5 @@
-github.com/AldiyarMaget/aitu-go-sdk v1.1.0 h1:sV32Fu+1hP6OYF7uXLGXHb4ENPzzFlCImH62CkgKnFA=
-github.com/AldiyarMaget/aitu-go-sdk v1.1.0/go.mod h1:O++O4DCkIp6pabL+L8JgaHX3kCDa6YA0YC1fkqpYDsA=
+github.com/AldiyarMaget/aitu-go-sdk v1.2.1 h1:JSxhTS5tKWBrr63kn0y5JX8PJz7yD67pS5kDbePagfA=
+github.com/AldiyarMaget/aitu-go-sdk v1.2.1/go.mod h1:O++O4DCkIp6pabL+L8JgaHX3kCDa6YA0YC1fkqpYDsA=
 github.com/beorn7/perks v1.0.1 h1:VlbKKnNfV8bJzeqoa4cOKqO6bYr3WgKZxO8Z16+hsOM=
 github.com/beorn7/perks v1.0.1/go.mod h1:G2ZrVWU2WbWT9wwq4/hrbKbnv/1ERSJQ0ibhJ6rlkpw=
 github.com/bytedance/gopkg v0.1.3 h1:TPBSwH8RsouGCBcMBktLt1AymVo2TVsBVCY4b6TnZ/M=

@@ -1,0 +1,18 @@
+# Stage 1: Build the payment-service
+FROM golang:1.25-alpine AS build
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+# Build the binary
+RUN go build -o /app/payment-service ./payment/cmd/payment/main.go
+
+# Stage 2: Create a minimal runner
+FROM alpine:latest
+WORKDIR /root/
+# Copy the compiled binary and migrations
+COPY --from=build /app/payment-service .
+COPY --from=build /app/payment/migrations ./payment/migrations
+COPY --from=build /app/payment/.env ./payment/.env
+EXPOSE 8080 8081 50051
+CMD ["./payment-service"]

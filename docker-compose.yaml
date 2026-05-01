@@ -57,6 +57,7 @@ services:
       - DB_URL=postgres://postgres:postgres@orders-db:5432/order_db?sslmode=disable
       - PAYMENT_SERVICE_URL=payment-service:50051
     ports:
+      - "50052:50052"
       - "8080:8080"
     depends_on:
       orders-db:
@@ -74,6 +75,7 @@ services:
     environment:
       - DB_URL=postgres://postgres:postgres@payments-db:5432/payment_db?sslmode=disable
     ports:
+      - "50051:50051"
       - "8081:8080" # Exposed on a different host port to avoid conflict, while internal metrics are on 8080
     depends_on:
       payments-db:

@@ -3,7 +3,7 @@ module order
 go 1.25.0
 
 require (
-	github.com/AldiyarMaget/aitu-go-sdk v1.1.0
+	github.com/AldiyarMaget/aitu-go-sdk v1.2.1
 	github.com/gin-gonic/gin v1.12.0
 	github.com/google/uuid v1.6.0
 	github.com/grpc-ecosystem/go-grpc-prometheus v1.2.0
