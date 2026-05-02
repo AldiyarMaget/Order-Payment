@@ -76,3 +76,15 @@ In a separate terminal instance, launch the Order Service. It sequentially launc
 ```bash
 go run ./cmd/order/main.go
 ```
+
+## Assignment 3: Event-Driven Architecture
+
+This system has been upgraded to an Event-Driven Architecture using RabbitMQ to decouple the Payment and Notification services.
+
+### Idempotency Strategy
+The `Notification Service` implements an idempotent consumer. Upon receiving an event, it checks an in-memory `sync.Map` store (simulating an idempotent cache/DB) using the event's unique `message_id`. If the message ID exists, the event is considered a duplicate and business logic processing is skipped. Regardless of whether it was skipped or newly processed, a successful manual ACK is always sent to ensure the broker removes the message.
+
+### ACK Logic & Reliability
+* **Manual Acknowledgements:** `auto-ack` is disabled in the Consumer. `msg.Ack(false)` is sent strictly *after* the business side effect (logging the email) has completed successfully.
+* **Dead Letter Queue (DLQ):** The Notification Service is configured with a retry mechanism. If processing fails 3 times, the message is `NACK`ed with `requeue=false`, routing it to a configured Dead Letter Exchange/Queue for inspection and manual intervention.
+* **Transactional Publishing:** The Payment Service (Producer) publishes messages to RabbitMQ *only after* the PostgreSQL transaction (recording the payment) has successfully committed. This eliminates "phantom events" ensuring events perfectly reflect the system of record.

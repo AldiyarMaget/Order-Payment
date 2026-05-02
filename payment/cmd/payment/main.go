@@ -4,18 +4,21 @@ import (
 	"database/sql"
 	"log"
 	"net"
+	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
 	_ "github.com/lib/pq"
 	"google.golang.org/grpc"
-	"net/http"
 
 	grpc_prometheus "github.com/grpc-ecosystem/go-grpc-prometheus"
 
 	grpc_delivery "order/payment/internal/delivery/grpc"
 	delivery "order/payment/internal/delivery/http"
+	"order/payment/internal/infrastructure"
 	"order/payment/internal/repository"
 	"order/payment/internal/usecase"
 
@@ -58,8 +61,19 @@ func main() {
 	}
 	log.Println("Payment database migrations applied.")
 
+	rmqURL := os.Getenv("RMQ_URL")
+	if rmqURL == "" {
+		rmqURL = "amqp://guest:guest@localhost:5672/"
+	}
+
+	broker, err := infrastructure.NewRabbitMQBroker(rmqURL)
+	if err != nil {
+		log.Fatalf("failed to initialize rabbitmq broker: %v", err)
+	}
+	defer broker.Close()
+
 	repo := repository.NewPostgresPaymentRepository(db)
-	uc := usecase.NewPaymentUseCase(repo)
+	uc := usecase.NewPaymentUseCase(repo, broker)
 
 	r := gin.Default()
 	r.GET("/metrics", gin.WrapH(promhttp.Handler()))
@@ -83,18 +97,19 @@ func main() {
 		grpcPort = ":50051"
 	}
 
+	grpcServer := grpc.NewServer(
+		grpc.ChainUnaryInterceptor(
+			grpc_delivery.LoggingInterceptor,
+			grpc_prometheus.UnaryServerInterceptor,
+		),
+	)
+
 	go func() {
 		lis, err := net.Listen("tcp", grpcPort)
 		if err != nil {
 			log.Fatalf("failed to listen on gRPC port: %v", err)
 		}
 
-		grpcServer := grpc.NewServer(
-			grpc.ChainUnaryInterceptor(
-				grpc_delivery.LoggingInterceptor,
-				grpc_prometheus.UnaryServerInterceptor,
-			),
-		)
 		grpcHandler := grpc_delivery.NewPaymentHandler(uc)
 		contract.RegisterPaymentServiceServer(grpcServer, grpcHandler)
 		grpc_prometheus.Register(grpcServer)
@@ -105,8 +120,21 @@ func main() {
 		}
 	}()
 
-	log.Printf("Payment HTTP service starting on port %s", port)
-	if err := r.Run(":" + port); err != nil {
-		log.Fatalf("failed to run payment HTTP service: %v", err)
-	}
+	go func() {
+		log.Printf("Payment HTTP service starting on port %s", port)
+		if err := r.Run(":" + port); err != nil {
+			log.Fatalf("failed to run payment HTTP service: %v", err)
+		}
+	}()
+
+	// Graceful Shutdown
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Println("Shutting down gracefully...")
+	grpcServer.GracefulStop()
+	broker.Close()
+	db.Close()
+	log.Println("Services stopped cleanly.")
 }

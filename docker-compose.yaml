@@ -8,6 +8,7 @@ volumes:
   orders-db-data:
   payments-db-data:
   grafana-data:
+  rabbitmq-data:
 
 services:
   orders-db:
@@ -74,11 +75,43 @@ services:
     container_name: payment-service
     environment:
       - DB_URL=postgres://postgres:postgres@payments-db:5432/payment_db?sslmode=disable
+      - RMQ_URL=amqp://guest:guest@rabbitmq:5672/
     ports:
       - "50051:50051"
       - "8081:8080" # Exposed on a different host port to avoid conflict, while internal metrics are on 8080
     depends_on:
       payments-db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - microservices-net
+  
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_running"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - microservices-net
+
+  notification:
+    build:
+      context: .
+      dockerfile: Dockerfile.notification
+    container_name: notification-service
+    environment:
+      - RMQ_URL=amqp://guest:guest@rabbitmq:5672/
+    depends_on:
+      rabbitmq:
         condition: service_healthy
     networks:
       - microservices-net
