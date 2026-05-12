@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"log"
 	"net"
@@ -23,6 +24,7 @@ import (
 	contract "github.com/AldiyarMaget/aitu-go-sdk/contract"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/redis/go-redis/v9"
 )
 
 var (
@@ -106,13 +108,27 @@ func main() {
 		paymentAddr = "localhost:50051"
 	}
 
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+
+	redisClient := redis.NewClient(&redis.Options{
+		Addr: redisAddr,
+	})
+	if err := redisClient.Ping(context.Background()).Err(); err != nil {
+		log.Printf("Warning: failed to connect to Redis: %v. Caching will fail open.", err)
+	}
+
 	orderRepo := repository.NewPostgresOrder(db)
+	orderCache := infrastructure.NewRedisOrderCache(redisClient)
 
 	paymentClient := infrastructure.NewPaymentClient(paymentAddr)
-	orderUseCase := usecase.NewOrderUseCase(orderRepo, paymentClient)
+	orderUseCase := usecase.NewOrderUseCase(orderRepo, paymentClient, orderCache)
 
 	router := gin.Default()
 	router.Use(prometheusMiddleware())
+	router.Use(delivHTTP.RateLimitMiddleware(redisClient, 10, time.Minute)) // 10 req/min
 	router.GET("/metrics", gin.WrapH(promhttp.Handler()))
 	delivHTTP.NewOrderHandler(router, orderUseCase)
 

@@ -88,3 +88,18 @@ The `Notification Service` implements an idempotent consumer. Upon receiving an 
 * **Manual Acknowledgements:** `auto-ack` is disabled in the Consumer. `msg.Ack(false)` is sent strictly *after* the business side effect (logging the email) has completed successfully.
 * **Dead Letter Queue (DLQ):** The Notification Service is configured with a retry mechanism. If processing fails 3 times, the message is `NACK`ed with `requeue=false`, routing it to a configured Dead Letter Exchange/Queue for inspection and manual intervention.
 * **Transactional Publishing:** The Payment Service (Producer) publishes messages to RabbitMQ *only after* the PostgreSQL transaction (recording the payment) has successfully committed. This eliminates "phantom events" ensuring events perfectly reflect the system of record.
+
+## Assignment 4: Resiliency and Caching
+
+This system has been upgraded to enhance performance and resilience under high load through caching and advanced background worker strategies.
+
+### Cache-aside Strategy & Invalidation (@Order Service)
+* **Cache-aside:** The read path checks Redis first for `order:{id}`. On a cache miss, data is fetched from PostgreSQL and stored in Redis with a 5-minute TTL.
+* **Fail Open:** If Redis is unavailable, the application gracefully degrades by logging the error and falling back directly to PostgreSQL, ensuring uninterrupted service.
+* **Invalidation:** A "Delete on Write" policy is strictly enforced. When an order status is updated (e.g. `CreateOrder` or `CancelOrder`), the cache key `order:{id}` is deleted from Redis immediately *after* the PostgreSQL transaction commits successfully.
+* **Rate Limiting:** A Redis-backed Fixed Window rate limiter middleware is applied to the HTTP delivery layer, restricting clients to 10 requests per minute based on IP address to prevent abuse.
+
+### Background Worker Reliability (@Notification Service)
+* **Adapter Pattern:** The Email logic is abstracted through an `EmailSender` interface, supporting a `MockSender` (with simulated delays/failures) and a real `SMTPSender`. The adapter is injected at startup via the `PROVIDER_MODE` environment variable.
+* **Redis Idempotency:** The worker ensures exactly-once execution by attempting to `SetNX` on a Redis key `processed:{payment_id}` with a 24-hour TTL. If the key already exists, the event is skipped and safely `ACK`ed.
+* **Exponential Backoff:** If the active `EmailSender` fails, the system retries using exponential backoff ($2^attempt \times 1s$ base delay) up to a configurable maximum retry limit before routing the message to the Dead Letter Queue.

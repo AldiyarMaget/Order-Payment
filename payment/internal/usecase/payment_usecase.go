@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
+	"github.com/google/uuid"
 	"order/payment/internal/domain"
 	"order/payment/internal/infrastructure"
-	"github.com/google/uuid"
 )
 
 var ErrPaymentExists = errors.New("payment already processed for this order")
@@ -72,6 +72,5 @@ func (u *paymentUseCase) GetPaymentByOrderID(ctx context.Context, orderID string
 }
 
 func (u *paymentUseCase) ListPayments(ctx context.Context, status string) ([]*domain.Payment, error) {
-    return u.repo.ListByStatus(ctx, status)
+	return u.repo.ListByStatus(ctx, status)
 }
-

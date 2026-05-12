@@ -27,12 +27,12 @@ func NewRabbitMQConsumer(url string, uc usecase.NotificationUseCase) (*RabbitMQC
 		if err == nil {
 			break
 		}
-		
+
 		backoff := time.Duration(2+i) * time.Second
 		if backoff > 5*time.Second {
 			backoff = 5 * time.Second
 		}
-		
+
 		log.Printf("Failed to connect to RabbitMQ (attempt %d/10): %v. Retrying in %v...", i+1, err, backoff)
 		time.Sleep(backoff)
 	}
@@ -145,20 +145,11 @@ func (c *RabbitMQConsumer) Start(ctx context.Context) error {
 					continue
 				}
 
-				success := false
-				for i := 1; i <= 3; i++ {
-					err := c.usecase.ProcessPaymentCompleted(ctx, event)
-					if err == nil {
-						success = true
-						break
-					}
-					log.Printf("[Notification] Attempt %d failed for message %s: %v", i, event.MessageID, err)
-				}
-
-				if success {
+				err := c.usecase.ProcessPaymentCompleted(ctx, event)
+				if err == nil {
 					msg.Ack(false) // Manual ACK
 				} else {
-					log.Printf("[Notification] Message %s failed 3 times, routing to DLQ.", event.MessageID)
+					log.Printf("[Notification] Message %s failed processing, routing to DLQ. Error: %v", event.MessageID, err)
 					msg.Nack(false, false) // NACK with requeue=false to route to DLQ
 				}
 			}

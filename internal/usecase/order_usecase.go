@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"sync"
 	"time"
 
@@ -30,15 +31,17 @@ type OrderUseCase interface {
 type orderUseCase struct {
 	repo          domain.OrderRepository
 	paymentClient domain.PaymentClient
+	cache         domain.OrderCache
 
 	subscribers map[string][]chan *domain.Order
 	mu          sync.RWMutex
 }
 
-func NewOrderUseCase(repo domain.OrderRepository, paymentClient domain.PaymentClient) OrderUseCase {
+func NewOrderUseCase(repo domain.OrderRepository, paymentClient domain.PaymentClient, cache domain.OrderCache) OrderUseCase {
 	return &orderUseCase{
 		repo:          repo,
 		paymentClient: paymentClient,
+		cache:         cache,
 		subscribers:   make(map[string][]chan *domain.Order),
 	}
 }
@@ -68,7 +71,9 @@ func (u *orderUseCase) CreateOrder(ctx context.Context, customerID, itemName str
 	paymentStatus, err := u.paymentClient.AuthorizePayment(ctx, order.ID, order.Amount)
 
 	if err != nil {
-		_ = u.repo.UpdateStatus(ctx, order.ID, domain.StatusFailed)
+		if updateErr := u.repo.UpdateStatus(ctx, order.ID, domain.StatusFailed); updateErr == nil {
+			_ = u.cache.Delete(ctx, order.ID)
+		}
 		return nil, fmt.Errorf("%w: %w", ErrPaymentUnavailable, err)
 	}
 
@@ -79,7 +84,8 @@ func (u *orderUseCase) CreateOrder(ctx context.Context, customerID, itemName str
 		newStatus = domain.StatusPaid
 	}
 
-	if err := u.repo.UpdateStatus(ctx, order.ID, newStatus); err != nil {
+	if err := u.repo.UpdateStatus(ctx, order.ID, newStatus); err == nil {
+		_ = u.cache.Delete(ctx, order.ID)
 	}
 	order.Status = newStatus
 
@@ -105,6 +111,7 @@ func (u *orderUseCase) CancelOrder(ctx context.Context, id string) error {
 	if err := u.repo.UpdateStatus(ctx, id, domain.StatusCancelled); err != nil {
 		return err
 	}
+	_ = u.cache.Delete(ctx, id)
 	order.Status = domain.StatusCancelled
 	u.notify(order)
 
@@ -112,10 +119,30 @@ func (u *orderUseCase) CancelOrder(ctx context.Context, id string) error {
 }
 
 func (u *orderUseCase) GetOrder(ctx context.Context, id string) (*domain.Order, error) {
+	// 1. Try Cache
+	if u.cache != nil {
+		cachedOrder, err := u.cache.Get(ctx, id)
+		if err == nil && cachedOrder != nil {
+			return cachedOrder, nil
+		}
+	}
+
+	// 2. Cache Miss -> DB
 	order, err := u.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, ErrOrderNotFound
 	}
+
+	// 3. Set Cache
+	if u.cache != nil {
+		ttlStr := os.Getenv("CACHE_TTL")
+		ttl, err := time.ParseDuration(ttlStr)
+		if err != nil || ttl == 0 {
+			ttl = 5 * time.Minute
+		}
+		_ = u.cache.Set(ctx, order, ttl)
+	}
+
 	return order, nil
 }
 

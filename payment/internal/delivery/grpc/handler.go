@@ -83,7 +83,7 @@ func (h *PaymentHandler) ListPayments(ctx context.Context, req *contract.ListPay
 			OrderId:       p.OrderID,
 			TransactionId: p.TransactionID,
 			Amount:        p.Amount,
-			Status:        h.mapStatusToPb(p.Status), 
+			Status:        h.mapStatusToPb(p.Status),
 		})
 	}
 

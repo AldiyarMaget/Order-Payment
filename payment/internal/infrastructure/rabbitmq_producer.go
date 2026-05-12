@@ -24,12 +24,12 @@ func NewRabbitMQBroker(url string) (MessageBroker, error) {
 		if err == nil {
 			break
 		}
-		
+
 		backoff := time.Duration(2+i) * time.Second
 		if backoff > 5*time.Second {
 			backoff = 5 * time.Second
 		}
-		
+
 		log.Printf("Failed to connect to RabbitMQ (attempt %d/10): %v. Retrying in %v...", i+1, err, backoff)
 		time.Sleep(backoff)
 	}
