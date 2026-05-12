@@ -32,11 +32,23 @@ graph TD
     subgraph Docker Infrastructure
         OrderDB[("Order Database<br/>(PostgreSQL)")]
         PaymentDB[("Payment Database<br/>(PostgreSQL)")]
+        Redis[("Redis<br/>(Cache & Rate Limiting)")]
+        RabbitMQ[("RabbitMQ<br/>(Message Broker)")]
     end
 
+    %% Order Service Interactions
+    OrderREST -.->|"Rate Limiting (Middleware) &<br/>Cache-aside (Get/Set/Delete)"| Redis
     OrderREST -.->|TCP| OrderDB
     OrderGRPC -.->|TCP| OrderDB
+
+    %% Payment Service Interactions
     PaymentService -.->|TCP| PaymentDB
+    PaymentService -.->|"Publish Event<br/>(After DB Transaction)"| RabbitMQ
+
+    %% Notification Service Interactions
+    NotificationWorker["Notification Service (Worker)"] -.->|"Consume Messages"| RabbitMQ
+    NotificationWorker -.->|"Idempotency Check"| Redis
+    NotificationWorker -.->|"Adapter Pattern<br/>(Mock/SMTP)"| EmailProvider(("Email Provider"))
 ```
 
 ## Execution Instructions
@@ -56,8 +68,8 @@ ORDER_GRPC_PORT=:50052
 PAYMENT_DB_URL=postgres://postgres:postgres@localhost:5432/payment_db?sslmode=disable
 ```
 
-### 2. Launch Databases in Docker
-Boot up the PostgreSQL instances defined for both services using Docker Compose:
+### 2. Launch Infrastructure in Docker
+Boot up the PostgreSQL, Redis, and RabbitMQ instances defined in the project using Docker Compose:
 ```bash
 docker-compose up -d
 ```
