@@ -16,6 +16,29 @@ func NewPostgresPaymentRepository(db *sql.DB) domain.PaymentRepository {
 	return &postgresPaymentRepository{db: db}
 }
 
+func (r *postgresPaymentRepository) ListByStatus(ctx context.Context, status string) ([]*domain.Payment, error) {
+	query := "SELECT id, order_id, transaction_id, amount, status FROM payments WHERE status = $1"
+	rows, err := r.db.QueryContext(ctx, query, status)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var payments []*domain.Payment
+	for rows.Next() {
+		p := &domain.Payment{}
+		var txID sql.NullString
+		if err := rows.Scan(&p.ID, &p.OrderID, &txID, &p.Amount, &p.Status); err != nil {
+			return nil, err
+		}
+		if txID.Valid {
+			p.TransactionID = txID.String
+		}
+		payments = append(payments, p)
+	}
+	return payments, nil
+}
+
 func (r *postgresPaymentRepository) Create(ctx context.Context, payment *domain.Payment) error {
 	query := `
 		INSERT INTO payments (id, order_id, transaction_id, amount, status)

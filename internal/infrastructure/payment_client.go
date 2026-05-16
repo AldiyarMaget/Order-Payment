@@ -1,72 +1,56 @@
 package infrastructure
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
-	"net/http"
+
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 
 	"order/internal/domain"
+
+	contract "github.com/AldiyarMaget/aitu-go-sdk/contract"
 )
 
 type PaymentClient struct {
-	client  *http.Client
-	baseURL string
+	grpcAddr string
 }
 
-func NewPaymentClient(client *http.Client, baseURL string) domain.PaymentClient {
+func NewPaymentClient(grpcAddr string) domain.PaymentClient {
 	return &PaymentClient{
-		client:  client,
-		baseURL: baseURL,
+		grpcAddr: grpcAddr,
 	}
-}
-
-type paymentRequest struct {
-	OrderID string `json:"order_id"`
-	Amount  int64  `json:"amount"`
-}
-
-type paymentResponse struct {
-	Status string `json:"status"`
 }
 
 func (c *PaymentClient) AuthorizePayment(ctx context.Context, orderID string, amount int64) (string, error) {
-	reqBody, _ := json.Marshal(paymentRequest{
-		OrderID: orderID,
+	conn, err := grpc.NewClient(c.grpcAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		return "", err
+	}
+	defer conn.Close()
+
+	client := contract.NewPaymentServiceClient(conn)
+
+	req := &contract.PaymentRequest{
+		OrderId: orderID,
 		Amount:  amount,
-	})
+	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/payments", bytes.NewBuffer(reqBody))
+	resp, err := client.ProcessPayment(ctx, req)
 	if err != nil {
-		return "", err
-	}
-	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusServiceUnavailable {
-		return "", errors.New("503 Service Unavailable")
-	}
-
-	bodyBytes, err := io.ReadAll(resp.Body)
-	if err != nil {
+		if st, ok := status.FromError(err); ok {
+			return "", errors.New(st.Message())
+		}
 		return "", err
 	}
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		return "", errors.New("payment failed with status: " + resp.Status)
+	switch resp.Status {
+	case contract.PaymentStatus_PAYMENT_STATUS_AUTHORIZED:
+		return "Authorized", nil
+	case contract.PaymentStatus_PAYMENT_STATUS_DECLINED:
+		return "Declined", nil
+	default:
+		return "", errors.New("unknown payment status")
 	}
-
-	var pRes paymentResponse
-	if err := json.Unmarshal(bodyBytes, &pRes); err != nil {
-		return "", err
-	}
-
-	return pRes.Status, nil
 }

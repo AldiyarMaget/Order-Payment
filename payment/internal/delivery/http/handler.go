@@ -3,8 +3,8 @@ package http
 import (
 	"net/http"
 
-	"order/payment/internal/usecase"
 	"github.com/gin-gonic/gin"
+	"order/payment/internal/usecase"
 )
 
 type PaymentHandler struct {

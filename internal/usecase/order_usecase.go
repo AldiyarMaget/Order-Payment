@@ -3,6 +3,9 @@ package usecase
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,17 +25,24 @@ type OrderUseCase interface {
 	CancelOrder(ctx context.Context, id string) error
 	GetOrder(ctx context.Context, id string) (*domain.Order, error)
 	GetByAmountRange(ctx context.Context, min, max int64) ([]domain.Order, error)
+	SubscribeToOrder(ctx context.Context, orderID string) (<-chan *domain.Order, func())
 }
 
 type orderUseCase struct {
 	repo          domain.OrderRepository
 	paymentClient domain.PaymentClient
+	cache         domain.OrderCache
+
+	subscribers map[string][]chan *domain.Order
+	mu          sync.RWMutex
 }
 
-func NewOrderUseCase(repo domain.OrderRepository, paymentClient domain.PaymentClient) OrderUseCase {
+func NewOrderUseCase(repo domain.OrderRepository, paymentClient domain.PaymentClient, cache domain.OrderCache) OrderUseCase {
 	return &orderUseCase{
 		repo:          repo,
 		paymentClient: paymentClient,
+		cache:         cache,
+		subscribers:   make(map[string][]chan *domain.Order),
 	}
 }
 
@@ -56,11 +66,15 @@ func (u *orderUseCase) CreateOrder(ctx context.Context, customerID, itemName str
 		return nil, err
 	}
 
+	u.notify(order) // Initial notification
+
 	paymentStatus, err := u.paymentClient.AuthorizePayment(ctx, order.ID, order.Amount)
 
 	if err != nil {
-		_ = u.repo.UpdateStatus(ctx, order.ID, domain.StatusFailed)
-		return nil, ErrPaymentUnavailable
+		if updateErr := u.repo.UpdateStatus(ctx, order.ID, domain.StatusFailed); updateErr == nil {
+			_ = u.cache.Delete(ctx, order.ID)
+		}
+		return nil, fmt.Errorf("%w: %w", ErrPaymentUnavailable, err)
 	}
 
 	newStatus := domain.StatusPaid
@@ -70,9 +84,12 @@ func (u *orderUseCase) CreateOrder(ctx context.Context, customerID, itemName str
 		newStatus = domain.StatusPaid
 	}
 
-	if err := u.repo.UpdateStatus(ctx, order.ID, newStatus); err != nil {
+	if err := u.repo.UpdateStatus(ctx, order.ID, newStatus); err == nil {
+		_ = u.cache.Delete(ctx, order.ID)
 	}
 	order.Status = newStatus
+
+	u.notify(order) // Notification after payment result
 
 	return order, nil
 }
@@ -91,17 +108,90 @@ func (u *orderUseCase) CancelOrder(ctx context.Context, id string) error {
 		return ErrInvalidState
 	}
 
-	return u.repo.UpdateStatus(ctx, id, domain.StatusCancelled)
+	if err := u.repo.UpdateStatus(ctx, id, domain.StatusCancelled); err != nil {
+		return err
+	}
+	_ = u.cache.Delete(ctx, id)
+	order.Status = domain.StatusCancelled
+	u.notify(order)
+
+	return nil
 }
 
 func (u *orderUseCase) GetOrder(ctx context.Context, id string) (*domain.Order, error) {
+	// 1. Try Cache
+	if u.cache != nil {
+		cachedOrder, err := u.cache.Get(ctx, id)
+		if err == nil && cachedOrder != nil {
+			return cachedOrder, nil
+		}
+	}
+
+	// 2. Cache Miss -> DB
 	order, err := u.repo.GetByID(ctx, id)
 	if err != nil {
 		return nil, ErrOrderNotFound
 	}
+
+	// 3. Set Cache
+	if u.cache != nil {
+		ttlStr := os.Getenv("CACHE_TTL")
+		ttl, err := time.ParseDuration(ttlStr)
+		if err != nil || ttl == 0 {
+			ttl = 5 * time.Minute
+		}
+		_ = u.cache.Set(ctx, order, ttl)
+	}
+
 	return order, nil
 }
 
 func (u *orderUseCase) GetByAmountRange(ctx context.Context, min, max int64) ([]domain.Order, error) {
 	return u.repo.GetByAmountRange(ctx, min, max)
+}
+
+func (u *orderUseCase) SubscribeToOrder(ctx context.Context, orderID string) (<-chan *domain.Order, func()) {
+	ch := make(chan *domain.Order, 1)
+
+	u.mu.Lock()
+	u.subscribers[orderID] = append(u.subscribers[orderID], ch)
+	u.mu.Unlock()
+
+	// Immediately push the current state to the client
+	order, err := u.GetOrder(ctx, orderID)
+	if err == nil && order != nil {
+		ch <- order
+	}
+
+	cleanup := func() {
+		u.mu.Lock()
+		defer u.mu.Unlock()
+		subs := u.subscribers[orderID]
+		for i, subCh := range subs {
+			if subCh == ch {
+				u.subscribers[orderID] = append(subs[:i], subs[i+1:]...)
+				break
+			}
+		}
+		close(ch)
+	}
+
+	return ch, cleanup
+}
+
+func (u *orderUseCase) notify(order *domain.Order) {
+	u.mu.RLock()
+	defer u.mu.RUnlock()
+
+	subs, exists := u.subscribers[order.ID]
+	if !exists {
+		return
+	}
+
+	for _, ch := range subs {
+		select {
+		case ch <- order:
+		default: // Avoid blocking if a client channel is full
+		}
+	}
 }

@@ -1,0 +1,19 @@
+# Stage 1: Build the order-service
+FROM golang:1.25-alpine AS build
+WORKDIR /app
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+# Build the binary
+RUN go build -o /app/order-service ./cmd/order/main.go
+
+# Stage 2: Create a minimal runner
+FROM alpine:latest
+WORKDIR /root/
+# Copy the compiled binary and migrations
+COPY --from=build /app/order-service .
+COPY --from=build /app/migrations ./migrations
+# Copy the .env file if used (optional, mostly use docker-compose env)
+COPY --from=build /app/.env.example ./.env
+EXPOSE 8080 50052
+CMD ["./order-service"]

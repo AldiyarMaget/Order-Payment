@@ -47,7 +47,7 @@ func (h *OrderHandler) CreateOrder(c *gin.Context) {
 	order, err := h.useCase.CreateOrder(c.Request.Context(), req.CustomerID, req.ItemName, req.Amount, idempotencyKey)
 	if err != nil {
 		if errors.Is(err, usecase.ErrPaymentUnavailable) {
-			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "payment service down"})
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
